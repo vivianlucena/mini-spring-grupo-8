@@ -1,0 +1,70 @@
+@baseUrl = http://127.0.0.1:8080
+
+### Informações da aplicação
+GET {{baseUrl}}/
+
+### Verificar saúde da API
+GET {{baseUrl}}/health
+
+### Criar serviço
+POST {{baseUrl}}/servicos
+Content-Type: application/json
+
+{
+  "nome": "Banho básico",
+  "duracaoMinutos": 40
+}
+
+### Listar todos os serviços
+GET {{baseUrl}}/servicos
+
+### Filtrar serviços pelo nome
+GET {{baseUrl}}/servicos?nome=banho
+
+### Consultar serviço por ID
+GET {{baseUrl}}/servicos/1
+
+### Atualizar serviço
+PUT {{baseUrl}}/servicos/1
+Content-Type: application/json
+
+{
+  "nome": "Banho e tosa",
+  "duracaoMinutos": 90
+}
+
+### Validar campos obrigatórios: 400
+POST {{baseUrl}}/servicos
+Content-Type: application/json
+
+{
+  "nome": " ",
+  "duracaoMinutos": 0
+}
+
+### Validar duração acima de 240 minutos: 422
+POST {{baseUrl}}/servicos
+Content-Type: application/json
+
+{
+  "nome": "Banho completo",
+  "duracaoMinutos": 241
+}
+
+### Validar JSON inválido: 400
+POST {{baseUrl}}/servicos
+Content-Type: application/json
+
+{"nome":
+
+### Validar tipo de mídia inválido: 415
+POST {{baseUrl}}/servicos
+Content-Type: text/plain
+
+texto
+
+### Validar método não permitido: 405
+PATCH {{baseUrl}}/servicos/1
+
+### Excluir serviço
+DELETE {{baseUrl}}/servicos/1
