@@ -1,150 +1,152 @@
+
 package br.com.minispring;
 
-import br.com.minispring.framework.annotation.Value;
-import br.com.minispring.framework.context.AppConfig;
-import br.com.minispring.framework.context.ApplicationContext;
+import br.com.minispring.exemplo.Application;
+import br.com.minispring.exemplo.repository.ServicoRepository;
+import br.com.minispring.exemplo.service.ServicoService;
+
 import org.junit.jupiter.api.Test;
 
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
+import org.springframework.beans.factory.BeanCreationException;
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
+import org.springframework.beans.factory.UnsatisfiedDependencyException;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@SpringBootTest(classes = Application.class)
 class ApplicationContextTest {
 
-    private final AppConfig config = new AppConfig(new Properties(), Map.of());
+    interface Storage {}
 
-    public interface Storage {}
+    static class Memory implements Storage {}
 
-    public static class Memory implements Storage {
-        public Memory() {}
-    }
+    static class OtherMemory implements Storage {}
 
-    public static class OtherMemory implements Storage {
-        public OtherMemory() {}
-    }
-
-    public static class Service {
+    static class StorageService {
         final Storage storage;
 
-        public Service(Storage storage) {
+        StorageService(Storage storage) {
             this.storage = storage;
         }
     }
 
-    public static class A {
-        public A(B b) {}
+    static class A {
+        A(B b) {}
     }
 
-    public static class B {
-        public B(A a) {}
+    static class B {
+        B(A a) {}
     }
 
-    public static class Configured {
+    static class Configured {
         final String name;
 
-        public Configured(@Value("test.name") String name) {
+        Configured(String name) {
             this.name = name;
         }
     }
 
-    public static class InvalidConstructors {
-        public InvalidConstructors() {}
+    @org.springframework.beans.factory.annotation.Autowired
+    private ServicoService servicoService;
 
-        public InvalidConstructors(Storage storage) {}
-    }
+    @org.springframework.beans.factory.annotation.Autowired
+    private ServicoRepository servicoRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.context.ApplicationContext context;
 
     @Test
     void injectsImplementationAndReusesSingleton() {
-        var context = new ApplicationContext(
-                Set.of(Service.class, Memory.class),
-                config
+        assertNotNull(servicoService);
+        assertNotNull(servicoRepository);
+
+        assertSame(
+                servicoService,
+                context.getBean(ServicoService.class)
         );
 
         assertSame(
-                context.getBean(Storage.class),
-                context.getBean(Service.class).storage
-        );
-
-        assertSame(
-                context.getBean(Service.class),
-                context.getBean(Service.class)
+                servicoRepository,
+                context.getBean(ServicoRepository.class)
         );
     }
 
     @Test
     void failsOnMissingDependency() {
-        var exception = assertThrows(
-                IllegalStateException.class,
-                () -> new ApplicationContext(Set.of(Service.class), config)
-        );
+        try (var testContext = new AnnotationConfigApplicationContext()) {
+            testContext.registerBean(StorageService.class);
 
-        assertTrue(exception.getMessage().contains("não registrada"));
+            assertThrows(
+                    UnsatisfiedDependencyException.class,
+                    testContext::refresh
+            );
+        }
     }
 
     @Test
     void failsOnAmbiguousDependency() {
-        var exception = assertThrows(
-                IllegalStateException.class,
-                () -> new ApplicationContext(
-                        Set.of(Service.class, Memory.class, OtherMemory.class),
-                        config
-                )
-        );
+        try (var testContext = new AnnotationConfigApplicationContext()) {
+            testContext.registerBean(StorageService.class);
+            testContext.registerBean(Memory.class);
+            testContext.registerBean(OtherMemory.class);
 
-        assertTrue(exception.getMessage().contains("ambígua"));
+            var exception = assertThrows(
+                    BeanCreationException.class,
+                    testContext::refresh
+            );
+
+            assertTrue(
+                    exception.getCause() instanceof
+                            NoUniqueBeanDefinitionException
+            );
+        }
     }
 
     @Test
     void explainsCircularDependency() {
-        var exception = assertThrows(
-                IllegalStateException.class,
-                () -> new ApplicationContext(Set.of(A.class, B.class), config)
-        );
+        try (var testContext = new AnnotationConfigApplicationContext()) {
+            testContext.registerBean(A.class);
+            testContext.registerBean(B.class);
 
-        assertTrue(exception.getMessage().contains("circular"));
+            assertThrows(
+                    BeanCreationException.class,
+                    testContext::refresh
+            );
+        }
     }
 
     @Test
-    void requiresOnePublicConstructor() {
-        assertThrows(
-                IllegalStateException.class,
-                () -> new ApplicationContext(Set.of(InvalidConstructors.class), config)
-        );
-    }
+    void injectsConfigurationProperty() {
+        try (var testContext = new AnnotationConfigApplicationContext()) {
 
-    @Test
-    void configurationPrecedenceAndInjection() {
-        var properties = new Properties();
-        properties.setProperty("test.name", "arquivo");
+            testContext.getEnvironment()
+                    .getPropertySources()
+                    .addFirst(
+                            new MapPropertySource(
+                                    "testProperties",
+                                    java.util.Map.of(
+                                            "test.name", "Pet Shop de teste"
+                                    )
+                            )
+                    );
 
-        var config = new AppConfig(properties, Map.of("TEST_NAME", "ambiente"));
-
-        assertEquals("ambiente", config.get("test.name"));
-
-        String previous = System.getProperty("test.name");
-
-        try {
-            System.setProperty("test.name", "sistema");
-
-            var context = new ApplicationContext(
-                    Set.of(Configured.class),
-                    config
+            testContext.registerBean(
+                    Configured.class,
+                    () -> new Configured(
+                            testContext.getEnvironment()
+                                    .getRequiredProperty("test.name")
+                    )
             );
 
-            assertEquals("sistema", context.getBean(Configured.class).name);
-        } finally {
-            if (previous == null) {
-                System.clearProperty("test.name");
-            } else {
-                System.setProperty("test.name", previous);
-            }
-        }
+            testContext.refresh();
 
-        assertEquals(
-                "arquivo",
-                new AppConfig(properties, Map.of()).get("test.name")
-        );
+            assertEquals(
+                    "Pet Shop de teste",
+                    testContext.getBean(Configured.class).name
+            );
+        }
     }
 }

@@ -1,61 +1,97 @@
+
 package br.com.minispring;
 
-import br.com.minispring.framework.MiniApplication;
-import br.com.minispring.framework.context.AppConfig;
+import br.com.minispring.exemplo.Application;
+
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import org.junit.jupiter.api.Test;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-import java.util.Map;
-import java.util.Properties;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+@SpringBootTest(
+        classes = {
+                Application.class,
+                UnexpectedErrorIntegrationTest.FailureConfig.class
+        }
+)
+@AutoConfigureMockMvc
 class UnexpectedErrorIntegrationTest {
 
-    @Test
-    void unexpectedFailureReturnsJsonWithoutLeakingImplementationDetails() throws Exception {
-        var config = new AppConfig(new Properties(), Map.of());
+    @Autowired
+    private MockMvc mockMvc;
 
-        try (
-                var app = MiniApplication.start(
-                        "br.com.minispring.failurefixture",
-                        config,
-                        0
-                );
-                var client = HttpClient.newHttpClient()
-        ) {
-            var request = HttpRequest.newBuilder(
-                            URI.create("http://127.0.0.1:" + app.port() + "/failure")
-                    )
-                    .timeout(Duration.ofSeconds(5))
-                    .GET()
-                    .build();
+    private final ObjectMapper json = new ObjectMapper();
 
-            var response = client.send(
-                    request,
-                    HttpResponse.BodyHandlers.ofString()
-            );
+    @TestConfiguration
+    static class FailureConfig {
 
-            assertEquals(500, response.statusCode());
+        @Bean
+        FailureController failureController() {
+            return new FailureController();
+        }
+    }
 
-            var body = new ObjectMapper().readTree(response.body());
+    @RestController
+    static class FailureController {
 
-            assertEquals(
-                    "Erro interno do servidor",
-                    body.get("message").asText()
-            );
-
-            assertFalse(response.body().contains("detalhe-interno-do-teste"));
-
-            assertEquals(
-                    response.headers().firstValue("X-Request-Id").orElseThrow(),
-                    body.get("requestId").asText()
+        @GetMapping("/failure")
+        public String failure() {
+            throw new IllegalStateException(
+                    "detalhe-interno-do-teste"
             );
         }
+    }
+
+    @Test
+    void unexpectedFailureReturnsJsonWithoutLeakingImplementationDetails()
+            throws Exception {
+
+        var result = mockMvc.perform(
+                        get("/failure")
+                                .accept(MediaType.APPLICATION_JSON)
+                )
+                .andExpect(status().isInternalServerError())
+                .andReturn();
+
+        String responseBody = result.getResponse()
+                .getContentAsString();
+
+        JsonNode body = json.readTree(responseBody);
+
+        assertEquals(
+                "Erro interno do servidor",
+                body.get("message").asText()
+        );
+
+        assertFalse(
+                responseBody.contains("detalhe-interno-do-teste")
+        );
+
+        String requestId = result.getResponse()
+                .getHeader("X-Request-Id");
+
+        assertNotNull(requestId);
+        assertFalse(requestId.isBlank());
+
+        assertEquals(
+                requestId,
+                body.get("requestId").asText()
+        );
     }
 }

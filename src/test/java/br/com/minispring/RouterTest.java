@@ -1,36 +1,86 @@
+
 package br.com.minispring;
 
-import br.com.minispring.framework.annotation.*;
-import br.com.minispring.framework.web.*;
 import org.junit.jupiter.api.Test;
-import java.util.List;
-import static org.junit.jupiter.api.Assertions.*;
 
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@SpringBootTest(
+        classes = {
+                br.com.minispring.exemplo.Application.class,
+                RouterTest.TestRoutesConfig.class
+        }
+)
+@AutoConfigureMockMvc
 class RouterTest {
-    @RestController("/items") public static class Routes {
-        @Route(method="GET", path="/{id}") public String item(@PathVariable("id") long id) { return "item"; }
-        @Route(method="GET", path="/resumo") public String summary() { return "summary"; }
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @TestConfiguration
+    static class TestRoutesConfig {
+
+        @Bean
+        Routes routes() {
+            return new Routes();
+        }
     }
-    @RestController("/items") public static class Duplicate {
-        @Route(method="GET", path="/{other}") public String item(@PathVariable("other") long id) { return "duplicate"; }
+
+    @RestController
+    @RequestMapping("/items")
+    static class Routes {
+
+        @GetMapping("/{id}")
+        public String item(@PathVariable("id") long id) {
+            return "item";
+        }
+
+        @GetMapping("/resumo")
+        public String summary() {
+            return "summary";
+        }
     }
-    @RestController public static class Invalid {
-        @Route(method="GET", path="/bad") public String bad(String missingAnnotation) { return ""; }
+
+    @Test
+    void literalRouteHasPriority() throws Exception {
+
+        mockMvc.perform(get("/items/resumo"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("summary"));
+
+        mockMvc.perform(get("/items/42"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("item"));
     }
-    @Test void literalRouteHasPriority() {
-        var router = new Router(List.of(new Routes()));
-        assertEquals("summary", router.match("GET", "/items/resumo").method().getName());
-        assertEquals("42", router.match("GET", "/items/42/").variables().get("id"));
-    }
-    @Test void distinguishesNotFoundAndMethodNotAllowed() {
-        var router = new Router(List.of(new Routes()));
-        assertEquals(404, assertThrows(HttpException.class, () -> router.match("GET", "/unknown")).status());
-        assertEquals(405, assertThrows(HttpException.class, () -> router.match("POST", "/items/1")).status());
-    }
-    @Test void rejectsDuplicateTemplatesEvenWithDifferentVariableNames() {
-        assertThrows(IllegalStateException.class, () -> new Router(List.of(new Routes(), new Duplicate())));
-    }
-    @Test void rejectsUnboundParametersAtStartup() {
-        assertThrows(IllegalStateException.class, () -> new Router(List.of(new Invalid())));
+
+    @Test
+    void distinguishesNotFoundAndMethodNotAllowed()
+            throws Exception {
+
+        mockMvc.perform(get("/unknown"))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(
+                        post("/items/1")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}")
+                )
+                .andExpect(status().isMethodNotAllowed());
     }
 }
